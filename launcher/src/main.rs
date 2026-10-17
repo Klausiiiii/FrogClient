@@ -12,6 +12,7 @@ mod launch;
 mod paths;
 mod platform;
 mod settings;
+mod update;
 
 slint::include_modules!();
 
