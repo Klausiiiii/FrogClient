@@ -60,20 +60,51 @@ pub trait TokenStore: Send + Sync {
 pub struct KeyringStore;
 
 const KEYRING_SERVICE: &str = "FrogClient";
+/// Windows limits one credential to 2560 bytes; longer tokens are split into numbered parts.
+const CHUNK: usize = 2000;
+
+fn entry(name: &str) -> Option<keyring::Entry> {
+    keyring::Entry::new(KEYRING_SERVICE, name).ok()
+}
+
+fn read(name: &str) -> Option<String> {
+    String::from_utf8(entry(name)?.get_secret().ok()?).ok()
+}
+
+fn write(name: &str, value: &str) -> Result<(), String> {
+    entry(name).ok_or("credential store unavailable")?.set_secret(value.as_bytes()).map_err(|e| e.to_string())
+}
+
+fn remove(name: &str) {
+    if let Some(e) = entry(name) {
+        let _ = e.delete_credential();
+    }
+}
 
 impl TokenStore for KeyringStore {
     fn get(&self, id: &str) -> Option<String> {
-        keyring::Entry::new(KEYRING_SERVICE, id).ok()?.get_password().ok()
+        let head = read(id)?;
+        let Some(n) = head.strip_prefix("chunks:").and_then(|n| n.parse::<usize>().ok()) else { return Some(head) };
+        (0..n).map(|i| read(&format!("{id}#{i}"))).collect()
     }
     fn set(&self, id: &str, token: &str) -> Result<(), String> {
-        keyring::Entry::new(KEYRING_SERVICE, id)
-            .and_then(|e| e.set_password(token))
-            .map_err(|e| e.to_string())
+        self.delete(id);
+        if token.len() <= CHUNK {
+            return write(id, token);
+        }
+        let parts: Vec<&str> = token.as_bytes().chunks(CHUNK).map(|c| std::str::from_utf8(c).map_err(|e| e.to_string())).collect::<Result<_, _>>()?;
+        for (i, part) in parts.iter().enumerate() {
+            write(&format!("{id}#{i}"), part)?;
+        }
+        write(id, &format!("chunks:{}", parts.len()))
     }
     fn delete(&self, id: &str) {
-        if let Ok(e) = keyring::Entry::new(KEYRING_SERVICE, id) {
-            let _ = e.delete_credential();
+        if let Some(n) = read(id).and_then(|h| h.strip_prefix("chunks:").and_then(|n| n.parse::<usize>().ok())) {
+            for i in 0..n {
+                remove(&format!("{id}#{i}"));
+            }
         }
+        remove(id);
     }
 }
 
@@ -150,6 +181,19 @@ mod tests {
         assert_eq!(s.heap_mb, 3072);
         assert_eq!(s.loader_version, "0.19.5");
         assert!(!s.minimize_on_launch);
+    }
+
+    /// Uses the real Windows Credential Manager: `cargo test -- --ignored keyring_store`.
+    #[test]
+    #[ignore]
+    fn keyring_store_holds_long_refresh_token() {
+        let token: String = "M.C5_BAY.0.U.-".chars().cycle().take(6000).collect();
+        let store = KeyringStore;
+        store.set("frogclient-selftest", &token).expect("store long token");
+        let back = store.get("frogclient-selftest");
+        store.delete("frogclient-selftest");
+        assert_eq!(back.as_deref(), Some(token.as_str()));
+        assert_eq!(store.get("frogclient-selftest"), None);
     }
 
     #[test]

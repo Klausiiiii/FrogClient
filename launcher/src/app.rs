@@ -376,6 +376,11 @@ impl App {
                 Ok((tokens, mc)) => {
                     if let Err(e) = sh.tokens.set(&mc.uuid, &tokens.refresh_token) {
                         app.log(&format!("could not store refresh token: {e}"));
+                        app.update(|s| {
+                            s.dialog = Some(3);
+                            s.dialog_text = format!("Die Anmeldung konnte nicht in der Windows-Anmeldeinformationsverwaltung gespeichert werden ({e}).");
+                        });
+                        return;
                     }
                     app.update(|s| {
                         s.file.accounts.retain(|a| a.id != mc.uuid);
