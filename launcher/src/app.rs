@@ -9,7 +9,7 @@ use crate::controller::{launch_accounts, start_button_label, AccountRow, LaunchU
 use crate::http::Http;
 use crate::launch::process::{available_memory_mb, ram_warning, InstanceEvent, ProcessManager};
 use crate::modrinth::{ModVersion, Modrinth, SearchHit, MODRINTH_API};
-use crate::mods::{ModStore, DEFAULT_CHOICES};
+use crate::mods::{InstalledMod, ModStore, ModsHandle, DEFAULT_CHOICES};
 use crate::mojang::install::MojangEndpoints;
 use crate::paths::AppPaths;
 use crate::update::{self, Release};
@@ -31,7 +31,8 @@ struct State {
     status: String,
     progress: Option<f32>,
     launching: bool,
-    mods: Option<ModStore>,
+    /// Snapshot of the mod store for the UI; the store itself lives behind `Shared::mods`.
+    mods_view: Vec<InstalledMod>,
     results: Vec<SearchHit>,
     updates: HashMap<String, ModVersion>,
     mods_status: String,
@@ -52,6 +53,7 @@ struct Shared {
     mojang: MojangEndpoints,
     auth: AuthEndpoints,
     modrinth: Modrinth,
+    mods: ModsHandle,
     tokens: Arc<dyn TokenStore>,
     processes: ProcessManager,
     log: Arc<dyn Fn(&str) + Send + Sync>,
@@ -87,6 +89,7 @@ impl App {
         let (tx, rx) = mpsc::unbounded_channel();
         let shared = Arc::new(Shared {
             modrinth: Modrinth::new(http.clone(), MODRINTH_API),
+            mods: ModsHandle::new(ModStore { path: paths.mods_json(), mods: Vec::new() }),
             log: file_logger(&paths),
             http,
             paths,
@@ -114,10 +117,12 @@ impl App {
         self.spawn(async move {
             let file = load_launcher_file(&app.shared.paths.launcher_json());
             let mods = ModStore::load(&app.shared.paths);
+            let view = mods.mods.clone();
+            *app.shared.mods.lock().await = mods;
             {
                 let mut s = app.state.lock().unwrap();
                 s.file = file;
-                s.mods = Some(mods);
+                s.mods_view = view;
             }
             app.refresh();
             if cfg!(feature = "dev") && std::env::var_os("FROGCLIENT_AUTOLAUNCH").is_some() {
@@ -216,11 +221,10 @@ impl App {
                 }
             })
             .collect();
-        let installed: HashSet<String> = s.mods.iter().flat_map(|m| m.mods.iter().map(|x| x.project_id.clone())).collect();
+        let installed: HashSet<String> = s.mods_view.iter().map(|x| x.project_id.clone()).collect();
         let mods: Vec<ModItem> = s
-            .mods
+            .mods_view
             .iter()
-            .flat_map(|m| m.mods.iter())
             .map(|m| ModItem {
                 id: m.project_id.clone().into(),
                 title: m.title.clone().into(),
@@ -437,7 +441,7 @@ impl App {
         let sh = &self.shared;
 
         // First setup: let the user pick the performance mods.
-        let first_setup = self.state.lock().unwrap().mods.as_ref().is_none_or(|m| m.needs_first_setup());
+        let first_setup = sh.mods.lock().await.needs_first_setup();
         if first_setup {
             let (tx, rx) = oneshot::channel();
             self.update(|s| {
@@ -449,10 +453,9 @@ impl App {
             }
             let Ok(Some(choices)) = rx.await else { return };
             self.update(|s| s.status = "Installiere Fabric API und Performance-Mods …".into());
-            let mut store = self.state.lock().unwrap().mods.take().unwrap_or_else(|| ModStore::load(&sh.paths));
             let choice_refs: Vec<&str> = choices.iter().map(String::as_str).collect();
-            let result = store.ensure_defaults(&sh.modrinth, &sh.paths, MC_VERSION, &choice_refs).await;
-            self.update(|s| s.mods = Some(store));
+            let result = sh.mods.lock().await.ensure_defaults(&sh.modrinth, &sh.paths, MC_VERSION, &choice_refs).await;
+            self.sync_mods().await;
             if let Err(e) = result {
                 self.log(&format!("default mods failed: {e}"));
                 self.update(|s| s.status = e.user_message());
@@ -482,7 +485,8 @@ impl App {
         if frog_jar.is_none() {
             self.log("FrogClient mod jar not found");
         }
-        let mod_jars = self.state.lock().unwrap().mods.as_ref().map(|m| m.enabled_jars(&sh.paths)).unwrap_or_default();
+        // Waits for a running install or update, so a game never starts with a half-updated mod list.
+        let mod_jars = sh.mods.enabled_jars(&sh.paths).await;
         let backend = RealBackend {
             http: sh.http.clone(),
             paths: sh.paths.clone(),
@@ -571,11 +575,9 @@ impl App {
         });
     }
 
-    async fn with_store<R>(&self, f: impl AsyncFnOnce(&mut ModStore) -> R) -> R {
-        let mut store = self.state.lock().unwrap().mods.take().unwrap_or_else(|| ModStore::load(&self.shared.paths));
-        let r = f(&mut store).await;
-        self.state.lock().unwrap().mods = Some(store);
-        r
+    async fn sync_mods(&self) {
+        let view = self.shared.mods.snapshot().await;
+        self.update(|s| s.mods_view = view);
     }
 
     pub fn install_mod(&self, project: String) {
@@ -583,7 +585,8 @@ impl App {
         let app = self.clone();
         self.spawn(async move {
             let sh = app.shared.clone();
-            let result = app.with_store(async |store| store.install(&sh.modrinth, &sh.paths, &project, MC_VERSION).await).await;
+            let result = sh.mods.install(&sh.modrinth, &sh.paths, &project, MC_VERSION).await;
+            app.sync_mods().await;
             app.update(|s| {
                 s.mods_status = match result {
                     Ok(titles) if titles.is_empty() => "Bereits installiert.".into(),
@@ -595,24 +598,27 @@ impl App {
     }
 
     pub fn toggle_mod(&self, project: String, enabled: bool) {
-        self.update(|s| {
-            if let Some(store) = s.mods.as_mut() {
-                if let Err(e) = store.set_enabled(&project, enabled) {
-                    s.mods_status = e.user_message();
-                }
+        let app = self.clone();
+        self.spawn(async move {
+            let result = app.shared.mods.lock().await.set_enabled(&project, enabled);
+            if let Err(e) = result {
+                app.update(|s| s.mods_status = e.user_message());
             }
+            app.sync_mods().await;
         });
     }
 
     pub fn remove_mod(&self, project: String) {
-        let paths = self.shared.paths.clone();
-        self.update(|s| {
-            if let Some(store) = s.mods.as_mut() {
-                if let Err(e) = store.remove(&project, &paths) {
+        let app = self.clone();
+        self.spawn(async move {
+            let result = app.shared.mods.lock().await.remove(&project, &app.shared.paths);
+            app.update(|s| {
+                if let Err(e) = result {
                     s.mods_status = e.user_message();
                 }
-            }
-            s.updates.remove(&project);
+                s.updates.remove(&project);
+            });
+            app.sync_mods().await;
         });
     }
 
@@ -621,7 +627,7 @@ impl App {
         let app = self.clone();
         self.spawn(async move {
             let sh = app.shared.clone();
-            let result = app.with_store(async |store| store.check_updates(&sh.modrinth, MC_VERSION).await).await;
+            let result = sh.mods.lock().await.check_updates(&sh.modrinth, MC_VERSION).await;
             app.update(|s| match result {
                 Ok(list) => {
                     s.mods_status = if list.is_empty() { "Alle Mods sind aktuell.".into() } else { format!("{} Update(s) verfügbar.", list.len()) };
@@ -638,7 +644,8 @@ impl App {
         let app = self.clone();
         self.spawn(async move {
             let sh = app.shared.clone();
-            let result = app.with_store(async |store| store.update(&sh.modrinth, &sh.paths, &project, &version).await).await;
+            let result = sh.mods.lock().await.update(&sh.modrinth, &sh.paths, &project, &version).await;
+            app.sync_mods().await;
             app.update(|s| match result {
                 Ok(()) => {
                     s.updates.remove(&project);

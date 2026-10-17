@@ -261,6 +261,33 @@ impl ModStore {
     }
 }
 
+/// Shared, serialized access to the mod store: installs, updates and launches queue up
+/// instead of working on diverging copies.
+#[derive(Clone)]
+pub struct ModsHandle(std::sync::Arc<tokio::sync::Mutex<ModStore>>);
+
+impl ModsHandle {
+    pub fn new(store: ModStore) -> ModsHandle {
+        ModsHandle(std::sync::Arc::new(tokio::sync::Mutex::new(store)))
+    }
+
+    pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, ModStore> {
+        self.0.lock().await
+    }
+
+    pub async fn install(&self, mr: &Modrinth, paths: &AppPaths, project: &str, mc: &str) -> Result<Vec<String>, ModError> {
+        self.0.lock().await.install(mr, paths, project, mc).await
+    }
+
+    pub async fn snapshot(&self) -> Vec<InstalledMod> {
+        self.0.lock().await.mods.clone()
+    }
+
+    pub async fn enabled_jars(&self, paths: &AppPaths) -> Vec<PathBuf> {
+        self.0.lock().await.enabled_jars(paths)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct ModsFile {
     mods: Vec<InstalledMod>,
@@ -390,6 +417,23 @@ mod tests {
         assert!(store.needs_first_setup(), "a user-installed mod must not skip installing Fabric API");
         store.install(&f.mr, &f.paths, "fabric-api", "26.3").await.unwrap();
         assert!(!store.needs_first_setup());
+    }
+
+    #[tokio::test]
+    async fn concurrent_installs_through_handle_keep_both() {
+        let f = fake().await;
+        project(&f, "lithium", "l1", json!([]), true).await;
+        project(&f, "sodium", "s1", json!([]), true).await;
+        let handle = ModsHandle::new(ModStore::load(&f.paths));
+        let (a, b) = tokio::join!(
+            handle.install(&f.mr, &f.paths, "lithium", "26.3"),
+            handle.install(&f.mr, &f.paths, "sodium", "26.3"),
+        );
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(handle.snapshot().await.len(), 2);
+        assert_eq!(ModStore::load(&f.paths).mods.len(), 2);
+        assert_eq!(handle.enabled_jars(&f.paths).await.len(), 2);
     }
 
     #[tokio::test]

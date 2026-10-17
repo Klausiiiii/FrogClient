@@ -89,6 +89,9 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// Tests reading or writing FROGCLIENT_MOD_JAR must not run concurrently.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[test]
     fn version_compare() {
         assert!(is_newer("v0.2.0", "0.1.9"));
@@ -121,6 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn release_asset_downloaded_and_cached() {
+        let _env = ENV_LOCK.lock().await;
         let server = MockServer::start().await;
         Mock::given(method("GET")).and(path("/dl/frog.jar"))
             .respond_with(ResponseTemplate::new(200).set_body_string("JAR")).expect(1).mount(&server).await;
@@ -141,6 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn env_jar_wins_and_none_without_sources() {
+        let _env = ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let p = AppPaths { home: dir.path().to_path_buf() };
         assert!(frog_mod_jar(&Http::new(), &p, None).await.is_none());
