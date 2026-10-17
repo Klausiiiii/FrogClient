@@ -2,6 +2,7 @@ package dev.frogclient.gui;
 
 import dev.frogclient.FrogClient;
 import dev.frogclient.config.GuiState;
+import dev.frogclient.hud.HudEditorScreen;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -25,6 +26,9 @@ public final class ClientScreen extends Screen {
 
 		addRenderableWidget(Button.builder(layoutLabel(), b -> switchLayout())
 				.bounds(width - BUTTON_W - 6, 6, BUTTON_W, BUTTON_H).build());
+		addRenderableWidget(Button.builder(Component.translatable("frogclient.gui.edit_hud"),
+						b -> minecraft.gui.setScreen(new HudEditorScreen(this)))
+				.bounds(width - BUTTON_W - 6, 6 + BUTTON_H + 4, BUTTON_W, BUTTON_H).build());
 	}
 
 	private static GuiLayout createLayout() {

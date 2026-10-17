@@ -17,5 +17,6 @@
 	"frogclient.gui.layout.panels": "Layout: Panels",
 	"frogclient.gui.layout.window": "Layout: Window",
 	"frogclient.gui.back": "< Back",
-	"frogclient.gui.edit_hud": "Edit HUD"
+	"frogclient.gui.edit_hud": "Edit HUD",
+	"frogclient.gui.hud_hint": "Drag to move · Right click: reset · Esc: done"
 }
