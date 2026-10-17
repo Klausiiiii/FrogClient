@@ -79,10 +79,6 @@ impl ModStore {
         ModStore { path, mods }
     }
 
-    pub fn exists(paths: &AppPaths) -> bool {
-        paths.mods_json().is_file()
-    }
-
     /// True until every required mod (Fabric API) is installed — not merely until mods.json exists,
     /// since a user may install other mods before the first start.
     pub fn needs_first_setup(&self) -> bool {
@@ -250,6 +246,8 @@ impl ModStore {
     }
 
     /// Titles of installed mods that have no Fabric build for `mc_other` (version switch check).
+    // Spec 6.2: prepared for switching Minecraft versions; no UI uses it until a second version exists.
+    #[allow(dead_code)]
     pub async fn missing_for(&self, mr: &Modrinth, mc_other: &str) -> Result<Vec<String>, ModError> {
         let mut missing = Vec::new();
         for m in &self.mods {

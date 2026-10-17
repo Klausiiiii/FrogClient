@@ -6,12 +6,9 @@ pub const MODRINTH_API: &str = "https://api.modrinth.com/v2";
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchHit {
     pub project_id: String,
-    pub slug: String,
     pub title: String,
     pub description: String,
     pub downloads: u64,
-    #[serde(default)]
-    pub icon_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,7 +151,7 @@ pub(crate) mod tests {
             .expect(1).mount(&server).await;
         let mr = Modrinth::new(Http::new(), &server.uri());
         let hits = mr.search("sodium", "26.3", 0).await.unwrap();
-        assert_eq!(hits[0].slug, "sodium");
+        assert_eq!(hits[0].title, "Sodium");
     }
 
     #[tokio::test]

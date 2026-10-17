@@ -114,6 +114,7 @@ impl ProcessManager {
         });
     }
 
+    #[cfg(test)]
     pub fn is_running(&self, id: &str) -> bool {
         self.running.lock().unwrap().contains_key(id)
     }
@@ -124,6 +125,7 @@ impl ProcessManager {
         }
     }
 
+    #[cfg(test)]
     pub fn running(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
         ids.sort();

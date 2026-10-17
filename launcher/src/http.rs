@@ -115,12 +115,18 @@ impl Http {
     }
 
     async fn download_one(&self, job: &DownloadJob) -> Result<u64, HttpError> {
-        if let Some(expected) = &job.sha1 {
-            if job.dest.is_file() && file_matches(&job.dest, expected).await {
-                return Ok(0);
+        // A known size is checked first: cheap, and the only check for files without a hash.
+        let size_ok = match (job.size, std::fs::metadata(&job.dest)) {
+            (_, Err(_)) => false,
+            (Some(expected), Ok(m)) => m.len() == expected,
+            (None, Ok(m)) => m.is_file(),
+        };
+        if size_ok {
+            match &job.sha1 {
+                Some(expected) if file_matches(&job.dest, expected).await => return Ok(0),
+                Some(_) => {}
+                None => return Ok(0),
             }
-        } else if job.dest.is_file() {
-            return Ok(0);
         }
 
         let mut last = HttpError::Network("no attempt".into());
@@ -256,6 +262,20 @@ mod tests {
         let dest = dir.path().join("a.bin");
         std::fs::write(&dest, "kaputt").unwrap();
         Http::new().download_all(vec![job(&server, "a", &dest)], 4, |_| {}).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn truncated_file_without_hash_is_refetched_by_size() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/a"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello"))
+            .expect(1).mount(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("a.bin");
+        std::fs::write(&dest, "hel").unwrap();
+        let job = DownloadJob { url: format!("{}/a", server.uri()), dest: dest.clone(), sha1: None, size: Some(5) };
+        Http::new().download_all(vec![job], 1, |_| {}).await.unwrap();
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "hello");
     }
 

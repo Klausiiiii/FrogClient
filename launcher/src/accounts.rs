@@ -108,9 +108,11 @@ impl TokenStore for KeyringStore {
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct MemoryStore(std::sync::Mutex<std::collections::HashMap<String, String>>);
 
+#[cfg(test)]
 impl TokenStore for MemoryStore {
     fn get(&self, id: &str) -> Option<String> {
         self.0.lock().unwrap().get(id).cloned()
