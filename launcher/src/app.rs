@@ -437,7 +437,8 @@ impl App {
         let sh = &self.shared;
 
         // First setup: let the user pick the performance mods.
-        if !ModStore::exists(&sh.paths) {
+        let first_setup = self.state.lock().unwrap().mods.as_ref().is_none_or(|m| m.needs_first_setup());
+        if first_setup {
             let (tx, rx) = oneshot::channel();
             self.update(|s| {
                 s.pending_defaults = Some(tx);

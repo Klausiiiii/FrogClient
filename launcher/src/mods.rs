@@ -83,6 +83,12 @@ impl ModStore {
         paths.mods_json().is_file()
     }
 
+    /// True until every required mod (Fabric API) is installed — not merely until mods.json exists,
+    /// since a user may install other mods before the first start.
+    pub fn needs_first_setup(&self) -> bool {
+        REQUIRED_SLUGS.iter().any(|slug| !self.is_installed(slug))
+    }
+
     pub fn save(&self) -> std::io::Result<()> {
         let json = serde_json::to_vec_pretty(&ModsFile { mods: self.mods.clone() }).map_err(std::io::Error::other)?;
         write_atomic(&self.path, &json)
@@ -371,6 +377,19 @@ mod tests {
         let mut store = ModStore::load(&f.paths);
         let err = store.install(&f.mr, &f.paths, "sodium", "26.3").await.unwrap_err();
         assert!(matches!(err, ModError::MissingDependency(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn first_setup_needed_until_required_mods_installed() {
+        let f = fake().await;
+        project(&f, "lithium", "l1", json!([]), true).await;
+        project(&f, "fabric-api", "f1", json!([]), true).await;
+        let mut store = ModStore::load(&f.paths);
+        assert!(store.needs_first_setup());
+        store.install(&f.mr, &f.paths, "lithium", "26.3").await.unwrap();
+        assert!(store.needs_first_setup(), "a user-installed mod must not skip installing Fabric API");
+        store.install(&f.mr, &f.paths, "fabric-api", "26.3").await.unwrap();
+        assert!(!store.needs_first_setup());
     }
 
     #[tokio::test]
