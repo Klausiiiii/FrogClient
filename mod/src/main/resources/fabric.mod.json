@@ -1,0 +1,23 @@
+{
+	"schemaVersion": 1,
+	"id": "frogclient",
+	"version": "${version}",
+	"name": "FrogClient",
+	"description": "A lightweight, performance-focused client.",
+	"authors": ["FrogClient"],
+	"contact": {
+		"sources": "https://github.com/Klausiiiii/FrogClient"
+	},
+	"icon": "assets/frogclient/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.frogclient.FrogClient"]
+	},
+	"mixins": ["frogclient.mixins.json"],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

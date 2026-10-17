@@ -1,1 +1,5 @@
 .superpowers/
+mod/run/
+mod/build/
+mod/.gradle/
+.gradle/
