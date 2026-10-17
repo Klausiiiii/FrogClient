@@ -103,7 +103,12 @@ impl ModStore {
             if self.is_installed(&wanted) || seen.contains(&wanted) {
                 continue;
             }
-            let info = mr.project(&wanted).await?;
+            let info = match mr.project(&wanted).await {
+                Ok(info) => info,
+                // A dependency pointing at a deleted project is a missing dependency, not a network problem.
+                Err(HttpError::Status(404, _)) if !is_root => return Err(ModError::MissingDependency(wanted)),
+                Err(e) => return Err(e.into()),
+            };
             if self.is_installed(&info.id) || seen.contains(&info.id) {
                 continue;
             }
@@ -118,7 +123,11 @@ impl ModStore {
             for dep in version.dependencies.iter().filter(|d| d.dependency_type == "required") {
                 let dep_project = match (&dep.project_id, &dep.version_id) {
                     (Some(p), _) => p.clone(),
-                    (None, Some(v)) => mr.version(v).await?.project_id,
+                    (None, Some(v)) => match mr.version(v).await {
+                        Ok(found) => found.project_id,
+                        Err(HttpError::Status(404, _)) => return Err(ModError::MissingDependency(v.clone())),
+                        Err(e) => return Err(e.into()),
+                    },
                     (None, None) => continue,
                 };
                 queue.push_back((dep_project, false));
@@ -351,6 +360,17 @@ mod tests {
         let err = store.install(&f.mr, &f.paths, "sodium", "26.3").await.unwrap_err();
         assert!(matches!(err, ModError::MissingDependency(_)), "{err:?}");
         assert!(store.mods.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleted_dependency_project_is_missing_dependency() {
+        let f = fake().await;
+        project(&f, "sodium", "s1", required_dep("id-deleted"), true).await;
+        Mock::given(method("GET")).and(path("/project/id-deleted"))
+            .respond_with(ResponseTemplate::new(404)).mount(&f.server).await;
+        let mut store = ModStore::load(&f.paths);
+        let err = store.install(&f.mr, &f.paths, "sodium", "26.3").await.unwrap_err();
+        assert!(matches!(err, ModError::MissingDependency(_)), "{err:?}");
     }
 
     #[tokio::test]
