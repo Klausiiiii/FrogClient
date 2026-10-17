@@ -23,6 +23,19 @@ FrogClient consists of two parts:
 
 Early development. Initial target: Minecraft 26.3 with Fabric. Windows first; Linux and macOS support planned.
 
+## Building the mod
+
+Requires Java 25.
+
+```sh
+cd mod
+./gradlew build              # unit tests + mod jar in mod/build/libs/
+./gradlew runClient          # start a dev client with the mod
+./gradlew runClientGameTest  # automated in-game check, screenshots in mod/build/run/clientGameTest/screenshots/
+```
+
+In game, press **Right Shift** to open the FrogClient menu and hold **C** to zoom (both rebindable in Controls).
+
 ## Authentication
 
 The launcher uses the official Microsoft → Xbox Live → XSTS → Minecraft login flow. Credentials are never sent to any third party; tokens are stored locally in the operating system's credential store.
