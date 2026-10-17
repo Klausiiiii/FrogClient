@@ -17,7 +17,7 @@
 - Projekt liegt in `/mod` im Monorepo. Alle Gradle-Befehle aus `G:\Projects\FrogClient\mod` mit `JAVA_HOME="C:\Program Files\Java\jdk-25.0.4"` (System-Default ist Java 21).
 - Config-Datei: `<configDir>/frogclient.json`; `configDir` = System-Property `frogclient.configDir`, sonst `FabricLoader.getInstance().getConfigDir()`. Schreiben immer atomar (temp + move).
 - Akzentfarbe `#5fd068` (`0xFF5FD068`), GUI dunkel/halbtransparent.
-- Keybind-Kategorie „FrogClient“: GUI öffnen = **Rechte Umschalt** (`GLFW_KEY_RIGHT_SHIFT`), Zoom = **C** (`GLFW_KEY_C`). Beide in den Minecraft-Steuerungseinstellungen änderbar.
+- Keybind-Kategorie „FrogClient“: GUI öffnen = **Rechte Umschalt** (`InputConstants.KEY_RSHIFT`, 26.3 nutzt SDL3-Scancodes), Zoom = **C** (`InputConstants.KEY_C`). Beide in den Minecraft-Steuerungseinstellungen änderbar.
 - Kein Code darf `options.txt`-Werte dauerhaft verändern (Gamma, Smooth Camera, FOV).
 - Inaktive Module registrieren keine Arbeit pro Tick/Frame; keine Allokationen pro Frame im HUD.
 - Sprachdateien `en_us.json` und `de_de.json`; alle UI-Texte über Übersetzungsschlüssel `frogclient.*` / `key.frogclient.*`.

@@ -2,6 +2,7 @@ package dev.frogclient;
 
 import dev.frogclient.config.ConfigStore;
 import dev.frogclient.config.GuiState;
+import dev.frogclient.feature.FullbrightModule;
 import dev.frogclient.module.ModuleManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -22,6 +23,9 @@ public final class FrogClient implements ClientModInitializer {
 		String version = FabricLoader.getInstance().getModContainer(MOD_ID)
 				.map(c -> c.getMetadata().getVersion().getFriendlyString())
 				.orElse("?");
+
+		FrogKeys.register();
+		modules.register(new FullbrightModule());
 
 		config = new ConfigStore(ConfigStore.resolveDir());
 		config.load(modules, gui);

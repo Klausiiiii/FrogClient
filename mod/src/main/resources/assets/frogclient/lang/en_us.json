@@ -1,2 +1,9 @@
 {
+	"key.category.frogclient.main": "FrogClient",
+	"key.frogclient.open_gui": "Open FrogClient menu",
+	"key.frogclient.zoom": "Zoom",
+	"frogclient.category.render": "Render",
+	"frogclient.category.hud": "HUD",
+	"frogclient.category.settings": "Settings",
+	"frogclient.module.fullbright": "Fullbright"
 }

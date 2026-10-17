@@ -2,7 +2,9 @@
 	"required": true,
 	"package": "dev.frogclient.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"client": [],
+	"client": [
+		"LightmapMixin"
+	],
 	"injectors": {
 		"defaultRequire": 1
 	}
