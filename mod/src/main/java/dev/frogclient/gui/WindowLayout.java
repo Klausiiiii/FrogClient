@@ -37,9 +37,10 @@ public final class WindowLayout implements GuiLayout {
 	@Override
 	public void init(ClientScreen screen, int width, int height) {
 		ww = (int) (width * 0.82);
-		wh = (int) (height * 0.76);
 		wx = (width - ww) / 2;
-		wy = (height - wh) / 2;
+		// Keep the window below the layout/HUD buttons in the top-right corner.
+		wy = Math.max((int) (height * 0.12), ClientScreen.BUTTONS_BOTTOM + 6);
+		wh = Math.max(60, Math.min((int) (height * 0.76), height - wy - 6));
 		sideW = (int) (ww * 0.28);
 		categories.clear();
 		for (Category c : Category.values()) {

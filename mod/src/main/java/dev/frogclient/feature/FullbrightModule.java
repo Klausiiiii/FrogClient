@@ -14,4 +14,12 @@ public final class FullbrightModule extends Module {
 	public double effectiveGamma(double optionGamma) {
 		return isEnabled() ? GAMMA_OVERRIDE : optionGamma;
 	}
+
+	/**
+	 * The 26.3 lightmap shader only amplifies existing light via gamma, so dark areas stay dark.
+	 * A white ambient color lifts every light level to full brightness.
+	 */
+	public boolean forcesFullAmbient() {
+		return isEnabled();
+	}
 }

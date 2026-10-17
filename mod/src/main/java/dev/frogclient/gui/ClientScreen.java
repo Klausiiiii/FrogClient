@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 public final class ClientScreen extends Screen {
 	private static final int BUTTON_W = 100;
 	private static final int BUTTON_H = 16;
+	static final int BUTTONS_BOTTOM = 6 + 2 * BUTTON_H + 4;
 
 	private GuiLayout layout;
 

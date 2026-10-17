@@ -41,3 +41,13 @@ java {
 test {
 	useJUnitPlatform()
 }
+
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "frogclient-test"
+		enableGameTests = false
+		enableClientGameTests = true
+		eula = true
+	}
+}

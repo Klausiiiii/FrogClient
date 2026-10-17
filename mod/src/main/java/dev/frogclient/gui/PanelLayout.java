@@ -23,7 +23,8 @@ public final class PanelLayout implements GuiLayout {
 	private static final int ROW_H = 14;
 	private static final int GAP = 10;
 	private static final int START_X = 10;
-	private static final int START_Y = 10;
+	/** Below the default FPS position so a fresh layout does not cover the HUD. */
+	private static final int START_Y = 26;
 
 	private final List<Panel> panels = new ArrayList<>();
 	private final Set<Module> expanded = new HashSet<>();
