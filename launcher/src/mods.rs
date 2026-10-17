@@ -400,6 +400,24 @@ mod tests {
         assert_eq!(store.enabled_jars(&f.paths).len(), 2);
     }
 
+    /// Talks to the real Modrinth API: `cargo test -- --ignored real_modrinth`.
+    #[tokio::test]
+    #[ignore]
+    async fn real_modrinth_installs_modmenu_with_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths { home: dir.path().to_path_buf() };
+        paths.ensure_dirs().unwrap();
+        let mr = Modrinth::new(Http::new(), crate::modrinth::MODRINTH_API);
+        let mut store = ModStore::load(&paths);
+        let titles = store.install(&mr, &paths, "modmenu", "26.3").await.unwrap();
+        println!("installed: {titles:?}");
+        assert!(titles.len() >= 3, "{titles:?}");
+        assert!(store.mods.iter().any(|m| m.slug == "fabric-api" && m.required));
+        for jar in store.enabled_jars(&paths) {
+            assert!(jar.is_file(), "{}", jar.display());
+        }
+    }
+
     #[tokio::test]
     async fn missing_for_lists_unavailable_mods() {
         let f = fake().await;
