@@ -51,3 +51,9 @@ fabricApi {
 		eula = true
 	}
 }
+
+jar {
+	from("../LICENSE") {
+		rename { "LICENSE_frogclient" }
+	}
+}

@@ -56,6 +56,14 @@ Useful environment variables (development):
 
 The launcher uses the official Microsoft → Xbox Live → XSTS → Minecraft login flow. Credentials are never sent to any third party; tokens are stored locally in the operating system's credential store.
 
+## License
+
+FrogClient is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License, version 3 (GPL-3.0-only). See [LICENSE](LICENSE).
+
+This license covers FrogClient's own code only. Minecraft is not included and remains subject
+to Mojang's EULA; the launcher downloads it directly from Mojang.
+
 ## Disclaimer
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.

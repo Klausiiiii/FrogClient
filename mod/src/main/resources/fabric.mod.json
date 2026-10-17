@@ -8,6 +8,7 @@
 	"contact": {
 		"sources": "https://github.com/Klausiiiii/FrogClient"
 	},
+	"license": "GPL-3.0-only",
 	"icon": "assets/frogclient/icon.png",
 	"environment": "client",
 	"entrypoints": {
