@@ -9,5 +9,9 @@
 	"frogclient.module.zoom": "Zoom",
 	"frogclient.setting.zoom.factor": "Zoom strength",
 	"frogclient.setting.zoom.scroll": "Scroll to adjust",
-	"frogclient.setting.zoom.smooth": "Smooth camera"
+	"frogclient.setting.zoom.smooth": "Smooth camera",
+	"frogclient.module.fps": "FPS display",
+	"frogclient.setting.fps.scale": "Size",
+	"frogclient.setting.fps.color": "Color",
+	"frogclient.setting.fps.background": "Background"
 }
