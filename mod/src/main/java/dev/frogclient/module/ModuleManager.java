@@ -6,8 +6,9 @@ import java.util.List;
 public final class ModuleManager {
 	private final List<Module> modules = new ArrayList<>();
 
-	public void register(Module module) {
+	public <M extends Module> M register(M module) {
 		modules.add(module);
+		return module;
 	}
 
 	public List<Module> all() {

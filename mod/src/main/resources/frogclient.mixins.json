@@ -3,7 +3,9 @@
 	"package": "dev.frogclient.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"LightmapMixin"
+		"CameraMixin",
+		"LightmapMixin",
+		"MouseHandlerMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

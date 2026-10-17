@@ -3,6 +3,8 @@ package dev.frogclient;
 import dev.frogclient.config.ConfigStore;
 import dev.frogclient.config.GuiState;
 import dev.frogclient.feature.FullbrightModule;
+import dev.frogclient.feature.zoom.ZoomModule;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import dev.frogclient.module.ModuleManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -26,6 +28,10 @@ public final class FrogClient implements ClientModInitializer {
 
 		FrogKeys.register();
 		modules.register(new FullbrightModule());
+		ZoomModule zoom = modules.register(new ZoomModule());
+
+		ClientTickEvents.END_CLIENT_TICK.register(client ->
+				zoom.tick(FrogKeys.ZOOM.isDown(), client.gui.screen() != null, client.isWindowActive()));
 
 		config = new ConfigStore(ConfigStore.resolveDir());
 		config.load(modules, gui);

@@ -5,5 +5,9 @@
 	"frogclient.category.render": "Render",
 	"frogclient.category.hud": "HUD",
 	"frogclient.category.settings": "Settings",
-	"frogclient.module.fullbright": "Fullbright"
+	"frogclient.module.fullbright": "Fullbright",
+	"frogclient.module.zoom": "Zoom",
+	"frogclient.setting.zoom.factor": "Zoom strength",
+	"frogclient.setting.zoom.scroll": "Scroll to adjust",
+	"frogclient.setting.zoom.smooth": "Smooth camera"
 }
