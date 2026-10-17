@@ -38,3 +38,6 @@ wiremock = "0.6"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[target.'cfg(windows)'.dependencies]
+junction = "1"
