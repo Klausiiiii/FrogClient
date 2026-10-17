@@ -5,6 +5,8 @@ mod auth;
 mod fabric;
 mod fsutil;
 mod http;
+mod modrinth;
+mod mods;
 mod mojang;
 mod launch;
 mod paths;
