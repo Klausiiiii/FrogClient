@@ -5,6 +5,7 @@
 	"client": [
 		"CameraMixin",
 		"LightmapMixin",
+		"MinecraftTitleMixin",
 		"MouseHandlerMixin"
 	],
 	"injectors": {
