@@ -6,7 +6,7 @@ use crate::controller::{Backend, LaunchUpdate, Session};
 use crate::fabric::{self, LaunchProfile};
 use crate::http::{Http, Progress};
 use crate::launch::args::{build_command, redact, LaunchContext};
-use crate::launch::instance::{finish_instance, newest_options, prepare_instance};
+use crate::launch::instance::{finish_instance, newest_options, prepare_instance, write_pid};
 use crate::launch::process::ProcessManager;
 use crate::mojang::install::{install_version, MojangEndpoints};
 use crate::mojang::java::install_java;
@@ -136,13 +136,20 @@ impl Backend for RealBackend {
         (self.log)(&format!("launch {}: {}", account.name, redact(&cmd).join(" ")));
         let paths = self.paths.clone();
         let log = self.log.clone();
-        self.processes
+        let game_dir = instance.game_dir.clone();
+        let pid = self
+            .processes
             .spawn(account.id.clone(), cmd, instance.game_dir.clone(), move || {
-                if let Err(e) = finish_instance(&paths, &instance) {
+                if let Err(e) = finish_instance(&paths, &game_dir) {
                     log(&format!("finish_instance failed: {e}"));
                 }
             })
             .await
-            .map_err(|e| format!("Java konnte nicht gestartet werden: {e}"))
+            .map_err(|e| format!("Java konnte nicht gestartet werden: {e}"))?;
+        // Lets a restarted launcher find this game again (no double start, server list still merged).
+        if let Err(e) = write_pid(&instance.game_dir, pid) {
+            (self.log)(&format!("could not write pid file: {e}"));
+        }
+        Ok(())
     }
 }

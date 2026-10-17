@@ -7,6 +7,7 @@ use crate::auth::{msa, xbox, AuthEndpoints, AuthError};
 use crate::backend::{RealBackend, MC_VERSION};
 use crate::controller::{launch_accounts, start_button_label, AccountRow, LaunchUpdate};
 use crate::http::Http;
+use crate::launch::instance::{finish_instance, pending_instances};
 use crate::launch::process::{available_memory_mb, ram_warning, InstanceEvent, ProcessManager};
 use crate::modrinth::{ModVersion, Modrinth, SearchHit, MODRINTH_API};
 use crate::mods::{InstalledMod, ModStore, ModsHandle, DEFAULT_CHOICES};
@@ -115,6 +116,7 @@ impl App {
     pub fn start_background(&self) {
         let app = self.clone();
         self.spawn(async move {
+            app.recover_instances();
             let file = load_launcher_file(&app.shared.paths.launcher_json());
             let mods = ModStore::load(&app.shared.paths);
             let view = mods.mods.clone();
@@ -143,6 +145,32 @@ impl App {
             }
             app.refresh();
         });
+    }
+
+    /// Games started by an earlier launcher session: still running ones are tracked again,
+    /// finished ones get their server list merged now.
+    fn recover_instances(&self) {
+        let sh = &self.shared;
+        for (id, pid) in pending_instances(&sh.paths) {
+            let game_dir = sh.paths.instance(&id);
+            match pid {
+                Some(pid) => {
+                    let paths = sh.paths.clone();
+                    let log = sh.log.clone();
+                    let dir = game_dir.clone();
+                    sh.processes.adopt(id, pid, game_dir, "java", move || {
+                        if let Err(e) = finish_instance(&paths, &dir) {
+                            log(&format!("finish_instance failed: {e}"));
+                        }
+                    });
+                }
+                None => {
+                    if let Err(e) = finish_instance(&sh.paths, &game_dir) {
+                        self.log(&format!("finish_instance failed: {e}"));
+                    }
+                }
+            }
+        }
     }
 
     fn spawn_events(&self, mut rx: mpsc::UnboundedReceiver<InstanceEvent>) {

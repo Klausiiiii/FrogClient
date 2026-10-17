@@ -27,6 +27,7 @@ rand = "0.9"
 url = "2"
 open = "5"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+fastnbt = "2.6"
 
 [build-dependencies]
 slint-build = "1.18"

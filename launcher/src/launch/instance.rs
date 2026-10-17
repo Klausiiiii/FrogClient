@@ -1,4 +1,5 @@
 use crate::fsutil::write_atomic;
+use crate::launch::servers;
 use crate::paths::AppPaths;
 use crate::platform::{link_dir, link_or_copy_file};
 use std::fs;
@@ -9,15 +10,23 @@ use std::time::SystemTime;
 /// Folders every instance shares through a directory link (spec 6.2).
 pub const SHARED_DIRS: [&str; 4] = ["resourcepacks", "shaderpacks", "screenshots", "config"];
 
+/// Launcher bookkeeping inside an instance; survives a launcher restart.
+const META_DIR: &str = ".frogclient";
+const SERVERS_BASE: &str = "servers.base.dat";
+const PID_FILE: &str = "pid";
+
 #[derive(Debug, Clone)]
 pub struct PreparedInstance {
     pub game_dir: PathBuf,
     pub natives_dir: PathBuf,
-    servers_snapshot: Option<SystemTime>,
+}
+
+fn meta(game_dir: &Path) -> PathBuf {
+    game_dir.join(META_DIR)
 }
 
 /// Builds `instances/<id>/` for one launch: shared folders linked, mods mirrored,
-/// server list copied in, options.txt seeded if missing.
+/// server list copied in (with its base kept for the merge on exit), options.txt seeded.
 pub fn prepare_instance(
     paths: &AppPaths,
     account_id: &str,
@@ -28,6 +37,9 @@ pub fn prepare_instance(
     let game_dir = paths.instance(account_id);
     let natives_dir = game_dir.join("natives");
     fs::create_dir_all(&natives_dir)?;
+    fs::create_dir_all(meta(&game_dir))?;
+    // A previous session that was never finished (launcher closed, crash) is merged first.
+    finish_instance(paths, &game_dir)?;
 
     for dir in SHARED_DIRS {
         link_dir(&paths.shared_gamedata().join(dir), &game_dir.join(dir))?;
@@ -49,14 +61,14 @@ pub fn prepare_instance(
         }
     }
 
-    // Minecraft rewrites servers.dat by replacing the file, which breaks hard links,
-    // so each instance gets a copy and publishes it back on exit if it changed.
-    let shared_servers = paths.shared_gamedata().join("servers.dat");
+    // Minecraft rewrites servers.dat by replacing the file, which breaks hard links, so each
+    // instance gets a copy; the copy's starting point is kept for the three-way merge.
+    let shared = fs::read(paths.shared_gamedata().join("servers.dat")).unwrap_or_default();
     let servers = game_dir.join("servers.dat");
-    if shared_servers.is_file() {
-        fs::copy(&shared_servers, &servers)?;
+    if !shared.is_empty() {
+        fs::write(&servers, &shared)?;
     }
-    let servers_snapshot = modified(&servers);
+    write_atomic(&meta(&game_dir).join(SERVERS_BASE), &shared)?;
 
     let options = game_dir.join("options.txt");
     if let Some(template) = options_template {
@@ -65,21 +77,50 @@ pub fn prepare_instance(
         }
     }
 
-    Ok(PreparedInstance { game_dir, natives_dir, servers_snapshot })
+    Ok(PreparedInstance { game_dir, natives_dir })
 }
 
-/// After the game exits: publish this instance's server list if it changed during the session.
-pub fn finish_instance(paths: &AppPaths, prepared: &PreparedInstance) -> io::Result<()> {
-    let servers = prepared.game_dir.join("servers.dat");
-    let changed = match (modified(&servers), prepared.servers_snapshot) {
-        (Some(now), Some(before)) => now > before,
-        (Some(_), None) => true,
-        (None, _) => false,
+/// After the game exits (or on the next launcher start): merge this session's server list
+/// edits into the shared list. Does nothing when no session is pending.
+pub fn finish_instance(paths: &AppPaths, game_dir: &Path) -> io::Result<()> {
+    let base_path = meta(game_dir).join(SERVERS_BASE);
+    let Ok(base) = fs::read(&base_path) else {
+        clear_pid(game_dir);
+        return Ok(());
     };
-    if changed {
-        write_atomic(&paths.shared_gamedata().join("servers.dat"), &fs::read(&servers)?)?;
+    let mine = fs::read(game_dir.join("servers.dat")).unwrap_or_default();
+    let shared_path = paths.shared_gamedata().join("servers.dat");
+    let shared = fs::read(&shared_path).unwrap_or_default();
+    if let Some(merged) = servers::merge(&base, &mine, &shared) {
+        write_atomic(&shared_path, &merged)?;
     }
+    fs::remove_file(&base_path)?;
+    clear_pid(game_dir);
     Ok(())
+}
+
+pub fn write_pid(game_dir: &Path, pid: u32) -> io::Result<()> {
+    write_atomic(&meta(game_dir).join(PID_FILE), pid.to_string().as_bytes())
+}
+
+pub fn read_pid(game_dir: &Path) -> Option<u32> {
+    fs::read_to_string(meta(game_dir).join(PID_FILE)).ok()?.trim().parse().ok()
+}
+
+pub fn clear_pid(game_dir: &Path) {
+    let _ = fs::remove_file(meta(game_dir).join(PID_FILE));
+}
+
+/// Instances whose last session was never finished, with the game's pid if one was recorded.
+pub fn pending_instances(paths: &AppPaths) -> Vec<(String, Option<u32>)> {
+    let Ok(dir) = fs::read_dir(paths.instances()) else { return Vec::new() };
+    let mut out: Vec<(String, Option<u32>)> = dir
+        .filter_map(|e| e.ok())
+        .filter(|e| meta(&e.path()).join(SERVERS_BASE).is_file())
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), read_pid(&e.path())))
+        .collect();
+    out.sort();
+    out
 }
 
 /// The most recently changed options.txt of any instance, used as template for new ones.
@@ -157,30 +198,77 @@ mod tests {
         assert!(shots.join("s.png").is_file());
     }
 
-    #[test]
-    fn servers_copied_in_and_back_when_changed() {
-        let (_d, p) = setup();
-        let shared = p.shared_gamedata().join("servers.dat");
-        fs::write(&shared, "v1").unwrap();
-        let prep = prepare_instance(&p, "a", &[], None, None).unwrap();
-        let mine = prep.game_dir.join("servers.dat");
-        assert_eq!(fs::read_to_string(&mine).unwrap(), "v1");
-        touch_later(&mine, "v2-from-a");
-        finish_instance(&p, &prep).unwrap();
-        assert_eq!(fs::read_to_string(&shared).unwrap(), "v2-from-a");
+    use crate::launch::servers::tests::{file, server};
+
+    fn shared_ips(p: &AppPaths) -> Vec<String> {
+        let bytes = fs::read(p.shared_gamedata().join("servers.dat")).unwrap();
+        let fastnbt::Value::Compound(root) = fastnbt::from_bytes::<fastnbt::Value>(&bytes).unwrap() else { panic!() };
+        let Some(fastnbt::Value::List(list)) = root.get("servers") else { panic!() };
+        list.iter().map(|s| match s {
+            fastnbt::Value::Compound(c) => match c.get("ip") { Some(fastnbt::Value::String(ip)) => ip.clone(), _ => String::new() },
+            _ => String::new(),
+        }).collect()
     }
 
     #[test]
-    fn servers_not_written_back_when_unchanged() {
+    fn servers_copied_in_and_merged_back() {
         let (_d, p) = setup();
-        let shared = p.shared_gamedata().join("servers.dat");
-        fs::write(&shared, "v1").unwrap();
+        fs::write(p.shared_gamedata().join("servers.dat"), file(vec![server("y.net", "Y", None)])).unwrap();
+        let prep = prepare_instance(&p, "a", &[], None, None).unwrap();
+        let mine = prep.game_dir.join("servers.dat");
+        assert_eq!(fs::read(&mine).unwrap(), file(vec![server("y.net", "Y", None)]));
+        fs::write(&mine, file(vec![server("y.net", "Y", None), server("z.net", "Z", None)])).unwrap();
+        finish_instance(&p, &prep.game_dir).unwrap();
+        assert_eq!(shared_ips(&p), vec!["y.net", "z.net"]);
+    }
+
+    #[test]
+    fn instance_that_only_played_does_not_drop_others_servers() {
+        let (_d, p) = setup();
+        fs::write(p.shared_gamedata().join("servers.dat"), file(vec![server("y.net", "Y", None)])).unwrap();
         let a = prepare_instance(&p, "a", &[], None, None).unwrap();
         let b = prepare_instance(&p, "b", &[], None, None).unwrap();
-        touch_later(&b.game_dir.join("servers.dat"), "from-b");
+        fs::write(b.game_dir.join("servers.dat"), file(vec![server("y.net", "Y", None), server("x.net", "X", None)])).unwrap();
+        finish_instance(&p, &b.game_dir).unwrap();
+        // a joined Y: Minecraft rewrote the file with a fresh icon, but the list is unchanged.
+        fs::write(a.game_dir.join("servers.dat"), file(vec![server("y.net", "Y", Some("icon"))])).unwrap();
+        finish_instance(&p, &a.game_dir).unwrap();
+        assert_eq!(shared_ips(&p), vec!["y.net", "x.net"]);
+    }
+
+    #[test]
+    fn merge_still_works_after_launcher_restart() {
+        let (_d, p) = setup();
+        fs::write(p.shared_gamedata().join("servers.dat"), file(vec![server("y.net", "Y", None)])).unwrap();
+        let game_dir = prepare_instance(&p, "a", &[], None, None).unwrap().game_dir;
+        fs::write(game_dir.join("servers.dat"), file(vec![])).unwrap();
+        // Launcher closed and reopened: only the files on disk are left.
+        finish_instance(&p, &game_dir).unwrap();
+        assert!(shared_ips(&p).is_empty());
+        // Finishing twice is harmless.
+        finish_instance(&p, &game_dir).unwrap();
+        assert!(shared_ips(&p).is_empty());
+    }
+
+    #[test]
+    fn pid_file_roundtrip_and_stale_detection() {
+        let (_d, p) = setup();
+        let game_dir = prepare_instance(&p, "a", &[], None, None).unwrap().game_dir;
+        assert_eq!(read_pid(&game_dir), None);
+        write_pid(&game_dir, 4242).unwrap();
+        assert_eq!(read_pid(&game_dir), Some(4242));
+        clear_pid(&game_dir);
+        assert_eq!(read_pid(&game_dir), None);
+    }
+
+    #[test]
+    fn pending_instances_lists_unfinished_sessions() {
+        let (_d, p) = setup();
+        let a = prepare_instance(&p, "a", &[], None, None).unwrap().game_dir;
+        write_pid(&a, 7).unwrap();
+        let b = prepare_instance(&p, "b", &[], None, None).unwrap().game_dir;
         finish_instance(&p, &b).unwrap();
-        finish_instance(&p, &a).unwrap(); // a changed nothing
-        assert_eq!(fs::read_to_string(&shared).unwrap(), "from-b");
+        assert_eq!(pending_instances(&p), vec![("a".to_string(), Some(7))]);
     }
 
     #[test]

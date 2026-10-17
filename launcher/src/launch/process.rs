@@ -28,14 +28,14 @@ impl ProcessManager {
 
     /// Starts `cmd` in `cwd`. JVM output goes to `logs/launcher-output.log`, which is the only
     /// trace when the JVM fails before Minecraft writes `latest.log`.
-    /// `on_exit` runs after the process ended, before the `Exited` event is sent.
+    /// `on_exit` runs after the process ended, before the `Exited` event is sent. Returns the pid.
     pub async fn spawn(
         &self,
         account_id: String,
         cmd: Vec<String>,
         cwd: PathBuf,
         on_exit: impl FnOnce() + Send + 'static,
-    ) -> io::Result<()> {
+    ) -> io::Result<u32> {
         let (program, args) = cmd.split_first().ok_or_else(|| io::Error::other("empty command"))?;
         let mut command = tokio::process::Command::new(program);
         let logs = cwd.join("logs");
@@ -49,6 +49,7 @@ impl ProcessManager {
             command.creation_flags(CREATE_NO_WINDOW);
         }
         let mut child = command.spawn()?;
+        let pid = child.id().unwrap_or(0);
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.running.lock().unwrap().insert(account_id.clone(), kill_tx);
@@ -69,7 +70,48 @@ impl ProcessManager {
             let code = status.ok().and_then(|s| s.code());
             let _ = events.send(InstanceEvent::Exited { account_id, code, log: crash_log(&cwd, started_at) });
         });
-        Ok(())
+        Ok(pid)
+    }
+
+    /// Tracks a game that was started by an earlier launcher session (found via its pid file).
+    /// `name_hint` guards against pid reuse: the process name must contain it.
+    pub fn adopt(&self, account_id: String, pid: u32, cwd: PathBuf, name_hint: &str, on_exit: impl FnOnce() + Send + 'static) {
+        let (kill_tx, mut kill_rx) = oneshot::channel();
+        self.running.lock().unwrap().insert(account_id.clone(), kill_tx);
+        let _ = self.events.send(InstanceEvent::Started { account_id: account_id.clone() });
+        let running = self.running.clone();
+        let events = self.events.clone();
+        let hint = name_hint.to_lowercase();
+        tokio::spawn(async move {
+            let started_at = std::time::SystemTime::now();
+            let mut sys = sysinfo::System::new();
+            let spid = sysinfo::Pid::from_u32(pid);
+            let mut killed = false;
+            loop {
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
+                let alive = sys.process(spid).is_some_and(|p| p.name().to_string_lossy().to_lowercase().contains(&hint));
+                if !alive {
+                    break;
+                }
+                if killed {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    continue;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                    _ = &mut kill_rx => {
+                        killed = true;
+                        if let Some(p) = sys.process(spid) {
+                            p.kill();
+                        }
+                    }
+                }
+            }
+            running.lock().unwrap().remove(&account_id);
+            on_exit();
+            // The exit code of a process this launcher did not start is unknown; report a clean exit.
+            let _ = events.send(InstanceEvent::Exited { account_id, code: Some(0), log: crash_log(&cwd, started_at) });
+        });
     }
 
     pub fn is_running(&self, id: &str) -> bool {
@@ -206,6 +248,35 @@ mod tests {
         assert_eq!(pm.running(), vec!["long".to_string()]);
         pm.kill("long");
         next_exit(&mut rx).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn adopted_process_is_tracked_and_killable() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let pm = ProcessManager::new(tx);
+        let dir = tempfile::tempdir().unwrap();
+        let child = std::process::Command::new("cmd").args(["/C", "ping", "-n", "30", "127.0.0.1"]).spawn().unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let c = called.clone();
+        pm.adopt("a".into(), child.id(), dir.path().into(), "", move || c.store(true, Ordering::SeqCst));
+        assert!(pm.is_running("a"));
+        pm.kill("a");
+        next_exit(&mut rx).await;
+        assert!(called.load(Ordering::SeqCst));
+        assert!(!pm.is_running("a"));
+    }
+
+    #[tokio::test]
+    async fn adopting_a_dead_pid_finishes_immediately() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let pm = ProcessManager::new(tx);
+        let dir = tempfile::tempdir().unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let c = called.clone();
+        pm.adopt("a".into(), 4_000_000_000, dir.path().into(), "java", move || c.store(true, Ordering::SeqCst));
+        next_exit(&mut rx).await;
+        assert!(called.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
