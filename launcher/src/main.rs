@@ -1,11 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
+mod auth;
 mod fabric;
+mod fsutil;
 mod http;
 mod mojang;
 mod launch;
 mod paths;
 mod platform;
+mod settings;
 
 slint::include_modules!();
 
