@@ -50,6 +50,6 @@ public final class FrogClient implements ClientModInitializer {
 	}
 
 	public static void saveConfig() {
-		if (config != null) config.save(modules, gui);
+		if (config != null) config.saveIfChanged(modules, gui);
 	}
 }

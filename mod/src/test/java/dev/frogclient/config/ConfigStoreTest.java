@@ -120,6 +120,60 @@ class ConfigStoreTest {
 	}
 
 	@Test
+	void saveIfChangedKeepsOtherInstancesWriteWhenNothingChanged(@TempDir Path dir) throws Exception {
+		var store = new ConfigStore(dir);
+		var mine = new Zoom();
+		store.load(modules(mine), new GuiState());
+
+		// Another instance saves a change while this one is running.
+		var other = new Zoom();
+		other.factor.set(8.0);
+		new ConfigStore(dir).save(modules(other), new GuiState());
+
+		store.saveIfChanged(modules(mine), new GuiState());
+		var check = new Zoom();
+		new ConfigStore(dir).load(modules(check), new GuiState());
+		assertEquals(8.0, check.factor.get());
+	}
+
+	@Test
+	void saveIfChangedWritesAfterLocalChange(@TempDir Path dir) {
+		var store = new ConfigStore(dir);
+		var z = new Zoom();
+		var gui = new GuiState();
+		store.load(modules(z), gui);
+		z.factor.set(6.0);
+		store.saveIfChanged(modules(z), gui);
+		var check = new Zoom();
+		new ConfigStore(dir).load(modules(check), new GuiState());
+		assertEquals(6.0, check.factor.get());
+	}
+
+	@Test
+	void concurrentSavesFromTwoInstancesNeverCorruptFile(@TempDir Path dir) throws Exception {
+		Runnable writer = () -> {
+			var store = new ConfigStore(dir);
+			for (int i = 0; i < 300; i++) {
+				var z = new Zoom();
+				z.factor.set(2.0 + (i % 16) * 0.5);
+				store.save(modules(z), new GuiState());
+			}
+		};
+		Thread a = new Thread(writer);
+		Thread b = new Thread(writer);
+		a.start();
+		b.start();
+		a.join();
+		b.join();
+		var z = new Zoom();
+		new ConfigStore(dir).load(modules(z), new GuiState());
+		assertFalse(Files.exists(dir.resolve("frogclient.json.bak")), "config was corrupted by concurrent writers");
+		try (var files = Files.list(dir)) {
+			assertTrue(files.noneMatch(p -> p.getFileName().toString().endsWith(".tmp")));
+		}
+	}
+
+	@Test
 	void resolveDirUsesSystemProperty(@TempDir Path dir) {
 		System.setProperty(ConfigStore.DIR_PROPERTY, dir.toString());
 		try {

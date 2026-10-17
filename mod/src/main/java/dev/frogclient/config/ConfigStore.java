@@ -30,6 +30,8 @@ public final class ConfigStore {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private final Path dir;
+	/** Serialized state as last loaded or written; unchanged state is never written back. */
+	private String lastJson;
 
 	public ConfigStore(Path dir) {
 		this.dir = dir;
@@ -46,6 +48,11 @@ public final class ConfigStore {
 	}
 
 	public void load(ModuleManager modules, GuiState gui) {
+		loadInto(modules, gui);
+		lastJson = serialize(modules, gui);
+	}
+
+	private void loadInto(ModuleManager modules, GuiState gui) {
 		Path file = file();
 		if (!Files.exists(file)) return;
 
@@ -112,7 +119,20 @@ public final class ConfigStore {
 		}
 	}
 
+	/**
+	 * Writes only if this instance changed something since load/last write, so an idle
+	 * instance never overwrites what another instance saved in the meantime.
+	 */
+	public void saveIfChanged(ModuleManager modules, GuiState gui) {
+		String json = serialize(modules, gui);
+		if (!json.equals(lastJson)) write(json);
+	}
+
 	public void save(ModuleManager modules, GuiState gui) {
+		write(serialize(modules, gui));
+	}
+
+	private String serialize(ModuleManager modules, GuiState gui) {
 		JsonObject root = new JsonObject();
 		root.addProperty("version", VERSION);
 
@@ -137,19 +157,33 @@ public final class ConfigStore {
 			modulesJson.add(module.id(), m);
 		}
 		root.add("modules", modulesJson);
+		return GSON.toJson(root);
+	}
 
+	private void write(String json) {
 		Path file = file();
-		Path tmp = dir.resolve("frogclient.json.tmp");
+		Path tmp = null;
 		try {
 			Files.createDirectories(dir);
-			Files.writeString(tmp, GSON.toJson(root), StandardCharsets.UTF_8);
+			// Unique name per write: parallel instances must never share a temp file.
+			tmp = Files.createTempFile(dir, "frogclient.json.", ".tmp");
+			Files.writeString(tmp, json, StandardCharsets.UTF_8);
 			try {
 				Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 			} catch (AtomicMoveNotSupportedException e) {
 				Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
 			}
+			lastJson = json;
 		} catch (IOException e) {
 			FrogClient.LOG.error("Could not save frogclient.json", e);
+		} finally {
+			if (tmp != null) {
+				try {
+					Files.deleteIfExists(tmp);
+				} catch (IOException ignored) {
+					// best effort cleanup
+				}
+			}
 		}
 	}
 
