@@ -26,7 +26,8 @@ impl ProcessManager {
         ProcessManager { events, running: Arc::default() }
     }
 
-    /// Starts `cmd` in `cwd`. Output is discarded: Minecraft writes its own logs.
+    /// Starts `cmd` in `cwd`. JVM output goes to `logs/launcher-output.log`, which is the only
+    /// trace when the JVM fails before Minecraft writes `latest.log`.
     /// `on_exit` runs after the process ended, before the `Exited` event is sent.
     pub async fn spawn(
         &self,
@@ -37,7 +38,11 @@ impl ProcessManager {
     ) -> io::Result<()> {
         let (program, args) = cmd.split_first().ok_or_else(|| io::Error::other("empty command"))?;
         let mut command = tokio::process::Command::new(program);
-        command.args(args).current_dir(&cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let logs = cwd.join("logs");
+        std::fs::create_dir_all(&logs)?;
+        let output = std::fs::File::create(logs.join("launcher-output.log"))?;
+        command.args(args).current_dir(&cwd).stdin(Stdio::null()).stdout(output.try_clone()?).stderr(output);
+        let started_at = std::time::SystemTime::now();
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -62,7 +67,7 @@ impl ProcessManager {
             running.lock().unwrap().remove(&account_id);
             on_exit();
             let code = status.ok().and_then(|s| s.code());
-            let _ = events.send(InstanceEvent::Exited { account_id, code, log: cwd.join("logs").join("latest.log") });
+            let _ = events.send(InstanceEvent::Exited { account_id, code, log: crash_log(&cwd, started_at) });
         });
         Ok(())
     }
@@ -82,6 +87,13 @@ impl ProcessManager {
         ids.sort();
         ids
     }
+}
+
+/// `latest.log` if Minecraft wrote it during this session, otherwise the raw JVM output.
+fn crash_log(cwd: &std::path::Path, started_at: std::time::SystemTime) -> PathBuf {
+    let latest = cwd.join("logs").join("latest.log");
+    let fresh = std::fs::metadata(&latest).and_then(|m| m.modified()).is_ok_and(|t| t >= started_at);
+    if fresh { latest } else { cwd.join("logs").join("launcher-output.log") }
 }
 
 pub fn ram_warning(heap_mb_each: u32, count: usize, available_mb: u64) -> Option<String> {
@@ -150,9 +162,22 @@ mod tests {
         let c = called.clone();
         pm.spawn("a".into(), cmd(&["exit", "3"]), dir.path().into(), move || c.store(true, Ordering::SeqCst)).await.unwrap();
         let ev = next_exit(&mut rx).await;
-        assert_eq!(ev, InstanceEvent::Exited { account_id: "a".into(), code: Some(3), log: dir.path().join("logs/latest.log") });
+        assert_eq!(ev, InstanceEvent::Exited { account_id: "a".into(), code: Some(3), log: dir.path().join("logs/launcher-output.log") });
         assert!(!pm.is_running("a"));
         assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn early_jvm_failure_points_to_output_log() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let pm = ProcessManager::new(tx);
+        let dir = tempfile::tempdir().unwrap();
+        pm.spawn("a".into(), cmd(&["echo", "Invalid maximum heap size", "&", "exit", "1"]), dir.path().into(), || {}).await.unwrap();
+        let InstanceEvent::Exited { log, code, .. } = next_exit(&mut rx).await else { unreachable!() };
+        assert_eq!(code, Some(1));
+        assert_eq!(log, dir.path().join("logs/launcher-output.log"));
+        assert!(std::fs::read_to_string(&log).unwrap().contains("Invalid maximum heap size"));
     }
 
     #[cfg(windows)]
