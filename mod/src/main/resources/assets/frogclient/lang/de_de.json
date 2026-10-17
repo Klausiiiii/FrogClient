@@ -13,5 +13,9 @@
 	"frogclient.module.fps": "FPS-Anzeige",
 	"frogclient.setting.fps.scale": "Größe",
 	"frogclient.setting.fps.color": "Farbe",
-	"frogclient.setting.fps.background": "Hintergrund"
+	"frogclient.setting.fps.background": "Hintergrund",
+	"frogclient.gui.layout.panels": "Layout: Panels",
+	"frogclient.gui.layout.window": "Layout: Fenster",
+	"frogclient.gui.back": "< Zurück",
+	"frogclient.gui.edit_hud": "HUD bearbeiten"
 }

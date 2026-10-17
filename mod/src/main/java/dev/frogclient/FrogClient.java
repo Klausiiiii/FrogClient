@@ -5,6 +5,7 @@ import dev.frogclient.config.GuiState;
 import dev.frogclient.feature.FullbrightModule;
 import dev.frogclient.feature.fps.FpsModule;
 import dev.frogclient.feature.zoom.ZoomModule;
+import dev.frogclient.gui.ClientScreen;
 import dev.frogclient.hud.HudRenderer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import dev.frogclient.module.ModuleManager;
@@ -34,8 +35,12 @@ public final class FrogClient implements ClientModInitializer {
 		modules.register(new FpsModule());
 		HudRenderer.register(modules, gui);
 
-		ClientTickEvents.END_CLIENT_TICK.register(client ->
-				zoom.tick(FrogKeys.ZOOM.isDown(), client.gui.screen() != null, client.isWindowActive()));
+		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			zoom.tick(FrogKeys.ZOOM.isDown(), client.gui.screen() != null, client.isWindowActive());
+			while (FrogKeys.OPEN_GUI.consumeClick()) {
+				if (client.gui.screen() == null) client.gui.setScreen(new ClientScreen());
+			}
+		});
 
 		config = new ConfigStore(ConfigStore.resolveDir());
 		config.load(modules, gui);
