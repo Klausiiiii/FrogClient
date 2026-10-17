@@ -1,0 +1,24 @@
+export component AppWindow inherits Window {
+    title: "FrogClient";
+    preferred-width: 900px;
+    preferred-height: 560px;
+    background: #121714;
+
+    HorizontalLayout {
+        Rectangle {
+            width: 46px;
+            background: #0c100d;
+            VerticalLayout {
+                padding-top: 10px;
+                spacing: 14px;
+                alignment: start;
+                Text { text: "▶"; color: #5fd068; font-size: 16px; horizontal-alignment: center; }
+                Text { text: "🧩"; color: #dfe9e0; font-size: 16px; horizontal-alignment: center; }
+                Text { text: "⚙"; color: #dfe9e0; font-size: 16px; horizontal-alignment: center; }
+            }
+        }
+        Rectangle {
+            Text { text: "🐸 FrogClient"; color: #5fd068; font-size: 20px; }
+        }
+    }
+}

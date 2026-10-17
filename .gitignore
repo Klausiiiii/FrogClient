@@ -4,3 +4,4 @@ mod/build/
 mod/.gradle/
 .gradle/
 mod/logs/
+launcher/target/
