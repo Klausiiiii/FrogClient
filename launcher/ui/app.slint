@@ -1,24 +1,384 @@
+import { Button, CheckBox, LineEdit, SpinBox, ScrollView, Switch, Palette } from "std-widgets.slint";
+
+export struct AccountItem {
+    id: string,
+    name: string,
+    initial: string,
+    color: color,
+    offline: bool,
+    selected: bool,
+    running: bool,
+    error: string,
+}
+
+export struct ModItem {
+    id: string,
+    title: string,
+    version: string,
+    enabled: bool,
+    required: bool,
+    has-update: bool,
+}
+
+export struct SearchItem {
+    id: string,
+    title: string,
+    description: string,
+    downloads: string,
+    installed: bool,
+}
+
+global Theme {
+    out property <color> bg: #121714;
+    out property <color> nav: #0c100d;
+    out property <color> row: #ffffff0d;
+    out property <color> row-hover: #ffffff17;
+    out property <color> accent: #5fd068;
+    out property <color> on-accent: #0b1a0d;
+    out property <color> text: #dfe9e0;
+    out property <color> muted: #8e9a90;
+    out property <color> error: #ff6b6b;
+}
+
+component NavButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> active;
+    callback clicked;
+    width: 46px;
+    height: 40px;
+    background: touch.has-hover ? Theme.row-hover : transparent;
+    Text {
+        text: icon;
+        font-size: 18px;
+        color: active ? Theme.accent : Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 44px;
+    border-radius: 6px;
+    background: !enabled ? #2c3a2e : (touch.has-hover ? #74dc7c : Theme.accent);
+    Text {
+        text: root.text;
+        font-size: 15px;
+        font-weight: 800;
+        color: enabled ? Theme.on-accent : Theme.muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+component Pill inherits Rectangle {
+    in property <string> text;
+    in property <color> fg: Theme.accent;
+    height: 18px;
+    width: label.preferred-width + 14px;
+    border-radius: 9px;
+    background: fg.with-alpha(0.15);
+    label := Text { text: root.text; color: root.fg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+component AccountRow inherits Rectangle {
+    in property <AccountItem> item;
+    callback toggle(string);
+    callback stop(string);
+    callback remove(string);
+    min-height: item.error == "" ? 40px : 58px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.row-hover : Theme.row;
+    touch := TouchArea { clicked => { root.toggle(item.id); } }
+    VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: stretch;
+            Rectangle {
+                width: 14px; height: 14px; y: (parent.height - self.height) / 2;
+                border-radius: 3px; border-width: 1.5px; border-color: Theme.accent;
+                background: item.selected ? Theme.accent : transparent;
+            }
+            Rectangle {
+                width: 24px; height: 24px; border-radius: 4px; background: item.color;
+                Text { text: item.initial; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Text { text: item.name; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+            if item.offline: Pill { text: "Offline"; fg: Theme.muted; y: (parent.height - self.height) / 2; }
+            if item.running: Pill { text: "läuft"; y: (parent.height - self.height) / 2; }
+            if item.running: Button { text: "Beenden"; clicked => { root.stop(item.id); } }
+            if !item.running: Text {
+                text: "×"; color: Theme.muted; vertical-alignment: center;
+                TouchArea { clicked => { root.remove(item.id); } }
+            }
+        }
+        if item.error != "": Text { text: item.error; color: Theme.error; font-size: 11px; wrap: word-wrap; }
+    }
+}
+
+component Dialog inherits Rectangle {
+    in property <string> title;
+    callback close;
+    background: #000000a0;
+    TouchArea {}
+    Rectangle {
+        width: min(440px, parent.width - 40px);
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: #1a211c;
+        border-radius: 8px;
+        content := VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            HorizontalLayout {
+                Text { text: root.title; color: Theme.accent; font-size: 16px; font-weight: 700; horizontal-stretch: 1; }
+                Text { text: "×"; color: Theme.muted; TouchArea { clicked => { root.close(); } } }
+            }
+            @children
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "FrogClient";
     preferred-width: 900px;
-    preferred-height: 560px;
-    background: #121714;
+    preferred-height: 580px;
+    min-width: 640px;
+    min-height: 420px;
+    background: Theme.bg;
+    default-font-size: 13px;
+
+    in-out property <int> tab: 0;
+    in property <[AccountItem]> accounts;
+    in property <string> start-label: "Account auswählen";
+    in property <bool> start-enabled: false;
+    in property <string> status;
+    in property <float> progress: -1;
+    in property <bool> can-add-offline;
+    in property <[ModItem]> mods;
+    in property <[SearchItem]> results;
+    in property <string> mods-status;
+    in-out property <int> heap-mb: 3072;
+    in-out property <string> jvm-args;
+    in-out property <bool> minimize-on-launch;
+    in property <string> version-text;
+    in property <string> update-notice;
+    in property <string> update-url;
+    // 0 none, 1 add account, 2 offline name, 3 device code / info, 4 default mods, 5 RAM warning
+    in-out property <int> dialog: 0;
+    in property <string> dialog-text;
+    in-out property <string> offline-name;
+    in property <string> offline-error;
+    in-out property <bool> d-sodium: true;
+    in-out property <bool> d-lithium: true;
+    in-out property <bool> d-ferrite: true;
+
+    callback toggle-account(string);
+    callback stop-account(string);
+    callback remove-account(string);
+    callback start();
+    callback add-microsoft();
+    callback add-offline(string);
+    callback search(string);
+    callback install-mod(string);
+    callback toggle-mod(string, bool);
+    callback remove-mod(string);
+    callback check-updates();
+    callback update-mod(string);
+    callback save-settings();
+    callback open-url(string);
+    callback confirm-defaults();
+    callback confirm-ram(bool);
+    callback close-dialog();
+
+    init => { Palette.color-scheme = ColorScheme.dark; }
 
     HorizontalLayout {
         Rectangle {
             width: 46px;
-            background: #0c100d;
+            background: Theme.nav;
             VerticalLayout {
-                padding-top: 10px;
-                spacing: 14px;
-                alignment: start;
-                Text { text: "▶"; color: #5fd068; font-size: 16px; horizontal-alignment: center; }
-                Text { text: "🧩"; color: #dfe9e0; font-size: 16px; horizontal-alignment: center; }
-                Text { text: "⚙"; color: #dfe9e0; font-size: 16px; horizontal-alignment: center; }
+                padding-top: 8px;
+                spacing: 4px;
+                alignment: LayoutAlignment.start;
+                NavButton { icon: "►"; active: tab == 0; clicked => { tab = 0; } }
+                NavButton { icon: "🧩"; active: tab == 1; clicked => { tab = 1; } }
+                NavButton { icon: "⚙"; active: tab == 2; clicked => { tab = 2; } }
             }
         }
-        Rectangle {
-            Text { text: "🐸 FrogClient"; color: #5fd068; font-size: 20px; }
+
+        // ── Spielen ──────────────────────────────────────────────
+        if tab == 0: VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: LayoutAlignment.start;
+                Text { text: "🐸 FrogClient"; color: Theme.accent; font-size: 18px; font-weight: 800; }
+                Text { text: "· 26.3 Fabric"; color: Theme.muted; font-size: 14px; vertical-alignment: center; }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: LayoutAlignment.start;
+                    for a in accounts: AccountRow {
+                        item: a;
+                        toggle(id) => { root.toggle-account(id); }
+                        stop(id) => { root.stop-account(id); }
+                        remove(id) => { root.remove-account(id); }
+                    }
+                    Rectangle {
+                        height: 36px; border-radius: 6px;
+                        background: add-touch.has-hover ? Theme.row-hover : transparent;
+                        border-width: 1px; border-color: Theme.row-hover;
+                        Text { text: "＋ Account hinzufügen"; color: Theme.muted; }
+                        add-touch := TouchArea { clicked => { dialog = 1; } }
+                    }
+                }
+            }
+            if status != "": Text { text: status; color: Theme.muted; font-size: 11px; }
+            if progress >= 0: Rectangle {
+                height: 4px; border-radius: 2px; background: #2c3a2e;
+                Rectangle { x: 0; width: parent.width * clamp(progress, 0, 1); background: Theme.accent; border-radius: 2px; }
+            }
+            PrimaryButton { text: start-label; enabled: start-enabled; clicked => { root.start(); } }
+        }
+
+        // ── Mods ─────────────────────────────────────────────────
+        if tab == 1: VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Mods"; color: Theme.accent; font-size: 18px; font-weight: 800; horizontal-stretch: 1; }
+                Button { text: "Nach Updates suchen"; clicked => { root.check-updates(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                query := LineEdit { placeholder-text: "Modrinth durchsuchen (26.3, Fabric) …"; accepted(text) => { root.search(text); } }
+                Button { text: "Suchen"; clicked => { root.search(query.text); } }
+            }
+            if mods-status != "": Text { text: mods-status; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: LayoutAlignment.start;
+                    for r in results: Rectangle {
+                        min-height: 48px; border-radius: 6px; background: Theme.row;
+                        HorizontalLayout {
+                            padding: 8px; spacing: 10px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text { text: r.title + "  ·  " + r.downloads + " Downloads"; color: Theme.text; font-weight: 700; }
+                                Text { text: r.description; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                            }
+                            if r.installed: Pill { text: "installiert"; y: (parent.height - self.height) / 2; }
+                            if !r.installed: Button { text: "Installieren"; clicked => { root.install-mod(r.id); } }
+                        }
+                    }
+                    if results.length > 0: Rectangle { height: 8px; }
+                    Text { text: "Installiert"; color: Theme.muted; font-size: 11px; }
+                    for m in mods: Rectangle {
+                        height: 40px; border-radius: 6px; background: Theme.row;
+                        HorizontalLayout {
+                            padding: 8px; spacing: 10px;
+                            Text { text: m.title; color: Theme.text; vertical-alignment: center; }
+                            Text { text: m.version; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; }
+                            if m.has-update: Button { text: "Update"; clicked => { root.update-mod(m.id); } }
+                            if m.required: Pill { text: "benötigt"; fg: Theme.muted; y: (parent.height - self.height) / 2; }
+                            if !m.required: Switch { checked: m.enabled; toggled => { root.toggle-mod(m.id, self.checked); } }
+                            if !m.required: Text {
+                                text: "×"; color: Theme.muted; vertical-alignment: center;
+                                TouchArea { clicked => { root.remove-mod(m.id); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Einstellungen ────────────────────────────────────────
+        if tab == 2: VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            alignment: LayoutAlignment.start;
+            Text { text: "Einstellungen"; color: Theme.accent; font-size: 18px; font-weight: 800; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Arbeitsspeicher pro Instanz (MB)"; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+                SpinBox { minimum: 1024; maximum: 16384; step-size: 512; value <=> heap-mb; edited => { root.save-settings(); } }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Zusätzliche JVM-Argumente"; color: Theme.text; }
+                LineEdit { text <=> jvm-args; placeholder-text: "z. B. -XX:+UseZGC"; edited => { root.save-settings(); } }
+            }
+            CheckBox { text: "Launcher nach dem Start minimieren"; checked <=> minimize-on-launch; toggled => { root.save-settings(); } }
+            Text { text: version-text; color: Theme.muted; font-size: 11px; }
+            if update-notice != "": HorizontalLayout {
+                spacing: 8px;
+                Text { text: update-notice; color: Theme.accent; vertical-alignment: center; }
+                Button { text: "Öffnen"; clicked => { root.open-url(update-url); } }
+            }
+        }
+    }
+
+    if dialog == 1: Dialog {
+        title: "Account hinzufügen";
+        close => { root.close-dialog(); }
+        PrimaryButton { text: "Mit Microsoft anmelden"; clicked => { root.add-microsoft(); } }
+        Button {
+            text: "Offline-Account";
+            enabled: can-add-offline;
+            clicked => { dialog = 2; }
+        }
+        if !can-add-offline: Text {
+            text: "Offline-Accounts gibt es erst, wenn ein Microsoft-Account mit gekauftem Minecraft angemeldet ist.";
+            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+        }
+    }
+
+    if dialog == 2: Dialog {
+        title: "Offline-Account";
+        close => { root.close-dialog(); }
+        LineEdit { text <=> offline-name; placeholder-text: "Spielername (3–16 Zeichen)"; accepted => { root.add-offline(offline-name); } }
+        if offline-error != "": Text { text: offline-error; color: Theme.error; font-size: 11px; }
+        PrimaryButton { text: "Hinzufügen"; clicked => { root.add-offline(offline-name); } }
+    }
+
+    if dialog == 3: Dialog {
+        title: "Anmeldung";
+        close => { root.close-dialog(); }
+        Text { text: dialog-text; color: Theme.text; wrap: word-wrap; }
+    }
+
+    if dialog == 4: Dialog {
+        title: "Erste Einrichtung";
+        close => { root.close-dialog(); }
+        Text { text: "Diese Performance-Mods werden mitinstalliert. Fabric API ist immer dabei."; color: Theme.text; wrap: word-wrap; }
+        CheckBox { text: "Sodium (Rendering)"; checked <=> d-sodium; }
+        CheckBox { text: "Lithium (Spiellogik)"; checked <=> d-lithium; }
+        CheckBox { text: "FerriteCore (Arbeitsspeicher)"; checked <=> d-ferrite; }
+        PrimaryButton { text: "Weiter"; clicked => { root.confirm-defaults(); } }
+    }
+
+    if dialog == 5: Dialog {
+        title: "Wenig Arbeitsspeicher";
+        close => { root.confirm-ram(false); }
+        Text { text: dialog-text; color: Theme.text; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Abbrechen"; clicked => { root.confirm-ram(false); } }
+            PrimaryButton { text: "Trotzdem starten"; clicked => { root.confirm-ram(true); } horizontal-stretch: 1; }
         }
     }
 }
